@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::s3::{
     BucketProvider, ConnectionConfig, SavedConnectionConfig, SavedCustomConfig, SavedR2Config,
-    SavedS3Config,
+    SavedS3Config, SavedS3AssumeRoleConfig,
 };
 
 const KEYRING_SERVICE: &str = "nicebucket";
@@ -26,6 +26,15 @@ fn connection_to_saved(config: ConnectionConfig, uuid: String) -> SavedConnectio
             SavedConnectionConfig::Custom(SavedCustomConfig {
                 common: custom_config.common,
                 endpoint_url: custom_config.endpoint_url,
+                uuid,
+            })
+        }
+        ConnectionConfig::S3AssumeRole(assume_role_config) => {
+            SavedConnectionConfig::S3AssumeRole(SavedS3AssumeRoleConfig {
+                label: assume_role_config.label,
+                master_connection_uuid: assume_role_config.master_connection_uuid,
+                role_arn: assume_role_config.role_arn,
+                region: assume_role_config.region,
                 uuid,
             })
         }
@@ -144,6 +153,9 @@ pub async fn is_connection_duplicate(
         ConnectionConfig::Custom(custom_config) => {
             (BucketProvider::Custom, &custom_config.common.access_key_id)
         }
+        ConnectionConfig::S3AssumeRole(assume_role) => {
+            (BucketProvider::S3AssumeRole, &assume_role.role_arn)
+        }
     };
 
     for saved_config in saved_connections {
@@ -152,6 +164,9 @@ pub async fn is_connection_duplicate(
             SavedConnectionConfig::R2(r2) => (BucketProvider::R2, &r2.common.access_key_id),
             SavedConnectionConfig::Custom(custom) => {
                 (BucketProvider::Custom, &custom.common.access_key_id)
+            }
+            SavedConnectionConfig::S3AssumeRole(assume_role) => {
+                (BucketProvider::S3AssumeRole, &assume_role.role_arn)
             }
         };
 

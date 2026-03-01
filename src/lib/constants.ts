@@ -1,6 +1,6 @@
 import { BucketProvider } from "@/bindings";
 
-export const PROVIDERS: BucketProvider[] = ["S3", "R2", "Custom"] as const;
+export const PROVIDERS: BucketProvider[] = ["S3", "R2", "Custom", "S3AssumeRole"] as const;
 
 interface FileInformation {
   mimeType: string;

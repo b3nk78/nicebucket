@@ -41,14 +41,14 @@ export function useCommands(): { commands: CommandMap } {
 
     if (result.status === "error") {
       console.error(result.error);
-      throw new Error("Unwrapping failed");
+      throw new Error(String(result.error));
     }
 
     return result.data;
   }
 
-  async function connectToS3(opts: ConnectionConfig) {
-    const result = tauriCommands.connectToS3(opts);
+  async function connectToS3(opts: ConnectionConfig, mfaToken: string | null = null) {
+    const result = tauriCommands.connectToS3(opts, mfaToken);
     return unwrap(result);
   }
 

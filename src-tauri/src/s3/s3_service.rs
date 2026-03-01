@@ -54,7 +54,7 @@ impl S3Service {
         let credentials = aws_sdk_s3::config::Credentials::new(
             service_config.config.common.access_key_id,
             service_config.config.common.secret_access_key,
-            None,
+            service_config.config.common.session_token,
             None,
             "manual",
         );
@@ -72,6 +72,100 @@ impl S3Service {
             provider,
             endpoint_url: service_config.endpoint_url,
         })
+    }
+
+    pub async fn assume_role_with_mfa(
+        master_access_key: &str,
+        master_secret_key: &str,
+        master_region: &str,
+        role_arn: &str,
+        mfa_arn: Option<&str>,
+        mfa_token: Option<&str>,
+    ) -> Result<(String, String, String), String> {
+        use aws_sdk_sts::Client as StsClient;
+
+        let region = Region::new(master_region.to_string());
+        let aws_config = aws_config::ConfigLoader::default()
+            .region(region)
+            .load()
+            .await;
+
+        let credentials = aws_sdk_sts::config::Credentials::new(
+            master_access_key,
+            master_secret_key,
+            None,
+            None,
+            "manual",
+        );
+
+        let sts_config = aws_sdk_sts::config::Builder::from(&aws_config)
+            .credentials_provider(credentials)
+            .build();
+
+        let sts_client = StsClient::from_conf(sts_config);
+        
+        let mut request = sts_client.assume_role()
+            .role_arn(role_arn)
+            .role_session_name("NicebucketSession");
+
+        if let (Some(m_arn), Some(m_token)) = (mfa_arn, mfa_token) {
+            request = request.serial_number(m_arn).token_code(m_token);
+        }
+
+        let resp = request.send().await.map_err(|e| format!("STS AssumeRole failed: {}", e))?;
+
+        let creds = resp.credentials().ok_or("No credentials returned from STS")?;
+
+        Ok((
+            creds.access_key_id().to_string(),
+            creds.secret_access_key().to_string(),
+            creds.session_token().to_string(),
+        ))
+    }
+
+    pub async fn get_session_token_with_mfa(
+        access_key: &str,
+        secret_key: &str,
+        region: &str,
+        mfa_arn: &str,
+        mfa_token: &str,
+    ) -> Result<(String, String, String), String> {
+        use aws_sdk_sts::Client as StsClient;
+
+        let region = Region::new(region.to_string());
+        let aws_config = aws_config::ConfigLoader::default()
+            .region(region)
+            .load()
+            .await;
+
+        let credentials = aws_sdk_sts::config::Credentials::new(
+            access_key,
+            secret_key,
+            None,
+            None,
+            "manual",
+        );
+
+        let sts_config = aws_sdk_sts::config::Builder::from(&aws_config)
+            .credentials_provider(credentials)
+            .build();
+
+        let sts_client = StsClient::from_conf(sts_config);
+
+        let resp = sts_client.get_session_token()
+            .serial_number(mfa_arn)
+            .token_code(mfa_token)
+            .send()
+            .await
+            .map_err(|e| format!("STS GetSessionToken failed: {}", e))?;
+
+        let creds = resp.credentials().ok_or("No credentials returned from STS")?;
+
+        Ok((
+            creds.access_key_id().to_string(),
+            creds.secret_access_key().to_string(),
+            creds.session_token().to_string(),
+        ))
     }
 
     pub fn get_bucket_endpoint(&self, opts: GetBucketEndpointOptions) -> String {

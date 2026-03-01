@@ -5,9 +5,9 @@
 
 
 export const commands = {
-async connectToS3(config: ConnectionConfig) : Promise<Result<Connection, string>> {
+async connectToS3(config: ConnectionConfig, mfaToken: string | null) : Promise<Result<Connection, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("connect_to_s3", { config }) };
+    return { status: "ok", data: await TAURI_INVOKE("connect_to_s3", { config, mfaToken }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -146,11 +146,11 @@ async isConnectionDuplicate(config: ConnectionConfig) : Promise<Result<boolean, 
 /** user-defined types **/
 
 export type BucketInfo = { provider: BucketProvider; name: string; region: string; endpoint_url: string; creation_date: string | null }
-export type BucketProvider = "S3" | "R2" | "Custom"
-export type CommonConfig = { label: string; access_key_id: string; secret_access_key: string }
+export type BucketProvider = "S3" | "R2" | "Custom" | "S3AssumeRole"
+export type CommonConfig = { label: string; access_key_id: string; secret_access_key: string; session_token: string | null; mfa_arn: string | null }
 export type CommonOperationOptions = { connection: Connection; bucket_region: string | null }
 export type Connection = { id: string; label: string; provider: BucketProvider }
-export type ConnectionConfig = { S3: S3Config } | { R2: R2Config } | { Custom: CustomConfig }
+export type ConnectionConfig = { S3: S3Config } | { R2: R2Config } | { Custom: CustomConfig } | { S3AssumeRole: S3AssumeRoleConfig }
 export type CreateFolderOptions = { common: CommonOperationOptions; bucket_name: string; folder_key: string }
 export type CustomConfig = { common: CommonConfig; endpoint_url: string }
 export type DeleteFolderOptions = { common: CommonOperationOptions; bucket_name: string; prefix: string }
@@ -162,10 +162,12 @@ export type ListObjectsOptions = { common: CommonOperationOptions; bucket_name: 
 export type MoveObjectsOptions = { common: CommonOperationOptions; bucket_name: string; keys: string[]; destination_prefix: string }
 export type ObjectInfo = { key: string; size: number | null; last_modified: string | null; storage_class: string | null; is_folder: boolean; url: string }
 export type R2Config = { common: CommonConfig; account_id: string }
+export type S3AssumeRoleConfig = { label: string; master_connection_uuid: string; role_arn: string; region: string | null; temp_access_key_id: string | null; temp_secret_access_key: string | null; temp_session_token: string | null }
 export type S3Config = { common: CommonConfig }
-export type SavedConnectionConfig = { S3: SavedS3Config } | { R2: SavedR2Config } | { Custom: SavedCustomConfig }
+export type SavedConnectionConfig = { S3: SavedS3Config } | { R2: SavedR2Config } | { Custom: SavedCustomConfig } | { S3AssumeRole: SavedS3AssumeRoleConfig }
 export type SavedCustomConfig = { common: CommonConfig; endpoint_url: string; uuid: string }
 export type SavedR2Config = { common: CommonConfig; account_id: string; uuid: string }
+export type SavedS3AssumeRoleConfig = { label: string; master_connection_uuid: string; role_arn: string; region: string | null; uuid: string }
 export type SavedS3Config = { common: CommonConfig; uuid: string }
 export type UploadObjectsOptions = { common: CommonOperationOptions; bucket_name: string; prefix: string | null; file_paths: string[] }
 

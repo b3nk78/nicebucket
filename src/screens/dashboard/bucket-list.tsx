@@ -26,13 +26,13 @@ export function BucketList({ headerPortalRef }: BucketListProps) {
   const { commands } = useCommands();
   const { connection, setSelectedBucket, searchPhrase } = useDashboardContext();
 
-  const { data, isPending, isFetching, isError, refetch } = useQuery({
+  const { data, isPending, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["listBuckets", connection?.id],
 
     queryFn: connection
       ? () => {
-          return commands.listBuckets(connection);
-        }
+        return commands.listBuckets(connection);
+      }
       : skipToken,
 
     select: (buckets: BucketInfo[]) => {
@@ -62,7 +62,12 @@ export function BucketList({ headerPortalRef }: BucketListProps) {
   }
 
   if (isError) {
-    return <div>ERROR</div>;
+    return (
+      <div className="flex h-full w-full flex-col items-center justify-center gap-2 p-8 text-center text-muted-foreground">
+        <p className="text-lg font-medium text-destructive">No S3 bucket detected or insufficient permissions.</p>
+        <p className="text-sm">{error instanceof Error ? error.message : String(error)}</p>
+      </div>
+    );
   }
 
   return (

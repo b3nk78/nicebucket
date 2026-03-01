@@ -27,6 +27,8 @@ pub struct CommonConfig {
     pub label: String,
     pub access_key_id: String,
     pub secret_access_key: String,
+    pub session_token: Option<String>,
+    pub mfa_arn: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Type, Clone)]
@@ -47,10 +49,22 @@ pub struct CustomConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Type, Clone)]
+pub struct S3AssumeRoleConfig {
+    pub label: String,
+    pub master_connection_uuid: String,
+    pub role_arn: String,
+    pub region: Option<String>,
+    pub temp_access_key_id: Option<String>,
+    pub temp_secret_access_key: Option<String>,
+    pub temp_session_token: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Type, Clone)]
 pub enum ConnectionConfig {
     S3(S3Config),
     R2(R2Config),
     Custom(CustomConfig),
+    S3AssumeRole(S3AssumeRoleConfig),
 }
 
 #[derive(Debug, Serialize, Deserialize, Type, Clone)]
@@ -74,10 +88,20 @@ pub struct SavedCustomConfig {
 }
 
 #[derive(Debug, Serialize, Deserialize, Type, Clone)]
+pub struct SavedS3AssumeRoleConfig {
+    pub label: String,
+    pub master_connection_uuid: String,
+    pub role_arn: String,
+    pub region: Option<String>,
+    pub uuid: String,
+}
+
+#[derive(Debug, Serialize, Deserialize, Type, Clone)]
 pub enum SavedConnectionConfig {
     S3(SavedS3Config),
     R2(SavedR2Config),
     Custom(SavedCustomConfig),
+    S3AssumeRole(SavedS3AssumeRoleConfig),
 }
 
 #[derive(Serialize, Deserialize, Type, Debug, Clone, PartialEq)]
@@ -85,6 +109,7 @@ pub enum BucketProvider {
     S3,
     R2,
     Custom,
+    S3AssumeRole,
 }
 
 #[derive(Debug, Serialize, Deserialize, Type)]
@@ -147,6 +172,24 @@ fn build_service_config(
             endpoint_url: custom_config.endpoint_url,
             provider: BucketProvider::Custom,
         },
+        ConnectionConfig::S3AssumeRole(assume_role_config) => {
+            let region = assume_role_config.region.clone().unwrap_or_else(|| bucket_region.unwrap_or_else(|| "us-east-1".to_string()));
+
+            S3ServiceConfig {
+                config: S3Config {
+                    common: CommonConfig {
+                        label: assume_role_config.label,
+                        access_key_id: assume_role_config.temp_access_key_id.unwrap_or_default(),
+                        secret_access_key: assume_role_config.temp_secret_access_key.unwrap_or_default(),
+                        session_token: assume_role_config.temp_session_token,
+                        mfa_arn: None,
+                    },
+                },
+                region: region.clone(),
+                endpoint_url: format!("https://s3.{}.amazonaws.com", region),
+                provider: BucketProvider::S3AssumeRole,
+            }
+        }
     }
 }
 
@@ -181,12 +224,67 @@ async fn create_service_from_config(
 #[tauri::command]
 #[specta::specta]
 pub async fn connect_to_s3(
+    app: tauri::AppHandle<tauri::Wry>,
     config: ConnectionConfig,
+    mfa_token: Option<String>,
     state: State<'_, ConnectionMap>,
 ) -> Result<Connection, String> {
     let id = Uuid::new_v4().to_string();
 
-    let connection = match &config {
+    let mut resolved_config = config.clone();
+    let mut sts_authenticated = false;
+
+    match resolved_config.clone() {
+        ConnectionConfig::S3AssumeRole(mut assume_role) => {
+            let saved_connections = crate::keyring::load_saved_connections(app.clone()).await?;
+            let master_conn = saved_connections.iter().find(|c| match c {
+                crate::s3::SavedConnectionConfig::S3(s) => s.uuid == assume_role.master_connection_uuid,
+                _ => false,
+            }).ok_or_else(|| "Master connection not found".to_string())?;
+
+            let master_s3 = match master_conn {
+                crate::s3::SavedConnectionConfig::S3(s) => s,
+                _ => unreachable!(),
+            };
+
+            let temp_creds = S3Service::assume_role_with_mfa(
+                &master_s3.common.access_key_id,
+                &master_s3.common.secret_access_key,
+                assume_role.region.as_deref().unwrap_or("us-east-1"),
+                &assume_role.role_arn,
+                master_s3.common.mfa_arn.as_deref(),
+                mfa_token.as_deref(),
+            ).await?;
+
+            assume_role.temp_access_key_id = Some(temp_creds.0);
+            assume_role.temp_secret_access_key = Some(temp_creds.1);
+            assume_role.temp_session_token = Some(temp_creds.2);
+
+            resolved_config = ConnectionConfig::S3AssumeRole(assume_role);
+            sts_authenticated = true;
+        }
+        ConnectionConfig::S3(mut s3_config) => {
+            if let (Some(mfa_arn), Some(token)) = (s3_config.common.mfa_arn.clone(), mfa_token.clone()) {
+                let temp_creds = S3Service::get_session_token_with_mfa(
+                    &s3_config.common.access_key_id,
+                    &s3_config.common.secret_access_key,
+                    "us-east-1",
+                    &mfa_arn,
+                    &token,
+                ).await?;
+
+                s3_config.common.access_key_id = temp_creds.0;
+                s3_config.common.secret_access_key = temp_creds.1;
+                s3_config.common.session_token = Some(temp_creds.2);
+
+                resolved_config = ConnectionConfig::S3(s3_config);
+                sts_authenticated = true;
+            }
+        }
+        _ => {}
+    }
+
+    let connection = match &resolved_config {
         ConnectionConfig::S3(s3_config) => Connection {
             id: id.clone(),
             label: s3_config.common.label.clone(),
@@ -202,17 +300,28 @@ pub async fn connect_to_s3(
             label: custom_config.common.label.clone(),
             provider: BucketProvider::Custom,
         },
+        ConnectionConfig::S3AssumeRole(assume_role) => Connection {
+            id: id.clone(),
+            label: assume_role.label.clone(),
+            provider: BucketProvider::S3AssumeRole,
+        },
     };
 
-    let service = create_service_from_config(config.clone(), None).await?;
+    let service = create_service_from_config(resolved_config.clone(), None).await?;
 
-    service
-        .list_buckets()
-        .await
-        .map_err(|e| format!("Connection failed: {}", e))?;
+    match service.list_buckets().await {
+        Ok(_) => {}
+        Err(e) => {
+            if !sts_authenticated {
+                return Err(format!("Connection failed: {}", e));
+            }
+            // If STS authenticated successfully, we allow the connection even if S3 list_buckets fails
+            // (e.g., due to IAM policies restricting Master accounts to only AssumeRole)
+        }
+    }
 
     let mut connections = state.lock().await;
-    connections.insert(id, config);
+    connections.insert(id, resolved_config);
 
     Ok(connection)
 }
