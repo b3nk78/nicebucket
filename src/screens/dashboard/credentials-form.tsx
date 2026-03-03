@@ -46,6 +46,7 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
   const [mfaDialogOpen, setMfaDialogOpen] = useState(false);
   const [mfaToken, setMfaToken] = useState("");
   const [pendingConfig, setPendingConfig] = useState<ConnectionConfig | null>(null);
+  const [editingUuid, setEditingUuid] = useState<string | null>(null);
 
   const { commands } = useCommands();
   const { setHasSavedConnections } = useKeyringState();
@@ -58,16 +59,21 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
 
   const { mutate: saveConnection } = useMutation({
     mutationFn: async (config: ConnectionConfig) => {
+      // If editing, delete old entry first
+      if (editingUuid) {
+        await commands.deleteSavedConnection(editingUuid);
+      }
       return commands.saveConnection(config);
     },
     onSuccess: async () => {
-      toast.success("Connection saved successfully");
+      toast.success(editingUuid ? "Connection updated successfully" : "Connection saved successfully");
+      setEditingUuid(null);
       setHasSavedConnections();
       await refetchSavedConnections();
       await refetchIsConnectionConfigDuplicate();
     },
     onError: () => {
-      toast.error("Failed to save connection");
+      toast.error(editingUuid ? "Failed to update connection" : "Failed to save connection");
     },
   });
 
@@ -120,6 +126,7 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
 
       masterConnectionUuid: z.string().optional(),
       roleArn: z.string().optional(),
+      assumeRoleRegion: z.string().optional(),
     })
     .refine(
       (args: any) => {
@@ -284,7 +291,7 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
             label,
             master_connection_uuid: masterConnectionUuid,
             role_arn: roleArn,
-            region: null,
+            region: data.assumeRoleRegion || null,
             temp_access_key_id: null,
             temp_secret_access_key: null,
             temp_session_token: null,
@@ -302,6 +309,37 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
     const connectionConfig = { [provider]: data } as ConnectionConfig;
 
     checkMfaAndConnect(connectionConfig);
+  };
+
+  const handleEditSaved = (config: SavedConnectionConfig) => {
+    const getDetails = (c: SavedConnectionConfig) => {
+      if ("S3AssumeRole" in c) {
+        return {
+          uuid: c.S3AssumeRole.uuid,
+          provider: "S3AssumeRole" as BucketProvider,
+          label: c.S3AssumeRole.label,
+          masterConnectionUuid: c.S3AssumeRole.master_connection_uuid,
+          roleArn: c.S3AssumeRole.role_arn,
+          assumeRoleRegion: c.S3AssumeRole.region ?? "",
+        };
+      }
+      const d = "S3" in c ? c.S3 : "R2" in c ? c.R2 : c.Custom;
+      return {
+        uuid: d.uuid,
+        provider: ("S3" in c ? "S3" : "R2" in c ? "R2" : "Custom") as BucketProvider,
+        label: d.common.label,
+        accessKeyId: d.common.access_key_id,
+        mfaArn: d.common.mfa_arn ?? "",
+        r2AccountId: ("R2" in c ? c.R2.account_id : undefined),
+        endpointUrl: ("Custom" in c ? c.Custom.endpoint_url : undefined),
+      };
+    };
+
+    const details = getDetails(config);
+    setEditingUuid(details.uuid);
+    // Scroll to form
+    reset(details as any);
+    document.getElementById("credentials-form")?.scrollIntoView({ behavior: "smooth" });
   };
 
   if (connection) {
@@ -368,15 +406,15 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
               return (
                 <li
                   key={details.uuid}
-                  className="hover:bg-muted/50 flex items-center justify-between rounded-md border p-3"
+                  className="hover:bg-muted/50 flex items-center gap-3 rounded-md border p-3"
                 >
-                  <div className="flex flex-col">
-                    <span className="font-medium">{details.label}</span>
-                    <span className="text-muted-foreground text-sm">
+                  <div className="min-w-0 flex-1 flex flex-col overflow-hidden">
+                    <span className="font-medium truncate">{details.label}</span>
+                    <span className="text-muted-foreground text-sm truncate">
                       {provider} • {details.accessKey}
                     </span>
                   </div>
-                  <div className="flex gap-2">
+                  <div className="flex shrink-0 gap-2">
                     <Button
                       variant="outline"
                       size="sm"
@@ -386,6 +424,15 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
                       disabled={isPending}
                     >
                       Connect
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => {
+                        handleEditSaved(config);
+                      }}
+                    >
+                      Edit
                     </Button>
                     <Button
                       variant="destructive"
@@ -405,11 +452,28 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
       )}
 
       <form
+        id="credentials-form"
         onSubmit={handleSubmit((data) => {
           checkMfaAndConnect(getConnectionConfig(data));
         })}
         className="space-y-8"
       >
+        {editingUuid && (
+          <div className="flex items-center justify-between rounded-md border border-yellow-500 bg-yellow-50 px-4 py-2 text-sm text-yellow-800 dark:bg-yellow-950 dark:text-yellow-200">
+            <span>✏️ Editing saved connection — save to update it.</span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setEditingUuid(null);
+                reset({ provider: "S3" });
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+        )}
         <FormField hasError={!!errors.provider}>
           <label htmlFor="provider">Provider</label>
 
@@ -522,6 +586,16 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
                 id="roleArn"
                 placeholder="arn:aws:iam::123456789012:role/mon-role"
                 {...register("roleArn")}
+              />
+            </FormField>
+
+            <FormField hasError={!!errors.assumeRoleRegion}>
+              <label htmlFor="assumeRoleRegion">AWS Region (Optional)</label>
+              <Input
+                type="text"
+                id="assumeRoleRegion"
+                placeholder="eu-west-1"
+                {...register("assumeRoleRegion")}
               />
             </FormField>
           </>

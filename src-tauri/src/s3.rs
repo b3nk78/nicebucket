@@ -141,6 +141,9 @@ fn build_service_config(
     config: ConnectionConfig,
     bucket_region: Option<String>,
 ) -> S3ServiceConfig {
+    // Normalize empty strings to None so the fallback logic works correctly
+    let bucket_region = bucket_region.and_then(|r| if r.is_empty() { None } else { Some(r) });
+
     match config {
         ConnectionConfig::S3(s3_config) => {
             let region = bucket_region.unwrap_or_else(|| "us-east-1".to_string());
@@ -173,7 +176,12 @@ fn build_service_config(
             provider: BucketProvider::Custom,
         },
         ConnectionConfig::S3AssumeRole(assume_role_config) => {
-            let region = assume_role_config.region.clone().unwrap_or_else(|| bucket_region.unwrap_or_else(|| "us-east-1".to_string()));
+            let region = assume_role_config
+                .region
+                .clone()
+                .and_then(|r| if r.is_empty() { None } else { Some(r) })
+                .or(bucket_region)
+                .unwrap_or_else(|| "us-east-1".to_string());
 
             S3ServiceConfig {
                 config: S3Config {
