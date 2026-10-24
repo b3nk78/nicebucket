@@ -9,8 +9,10 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
+use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
 use zip::write::ZipWriter;
 use zip::CompressionMethod;
@@ -327,15 +329,20 @@ impl S3Service {
         prefix: Option<String>,
         file_paths: Vec<PathBuf>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        const MAX_CONCURRENT: usize = 8;
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
         let mut handles: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> =
             Vec::new();
 
         for path in file_paths {
+            let permit = semaphore.clone().acquire_owned().await?;
             let bucket_name_clone = bucket_name.to_string();
             let prefix_clone = prefix.clone();
             let client_clone = self.client.clone();
 
             let handle = tokio::spawn(async move {
+                let _permit = permit; // released when task ends
+
                 let file_name = path
                     .file_name()
                     .and_then(|name| name.to_str())
@@ -397,35 +404,25 @@ impl S3Service {
         bucket_name: &str,
         keys: Vec<String>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        let mut handles: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> =
-            Vec::new();
+        const BATCH_SIZE: usize = 1000;
 
-        for key in keys {
-            let client_clone = self.client.clone();
-            let bucket_name_clone = bucket_name.to_string();
-            let key_clone = key.clone();
+        for chunk in keys.chunks(BATCH_SIZE) {
+            let keys_to_delete: Vec<ObjectIdentifier> = chunk
+                .iter()
+                .map(|key| ObjectIdentifier::builder().key(key).build().unwrap())
+                .collect();
 
-            let handle = tokio::spawn(async move {
-                client_clone
-                    .delete_object()
-                    .bucket(&bucket_name_clone)
-                    .key(&key_clone)
-                    .send()
-                    .await?;
-                Ok(())
-            });
+            let delete = Delete::builder()
+                .set_objects(Some(keys_to_delete))
+                .quiet(true)
+                .build()?;
 
-            handles.push(handle);
-        }
-
-        for handle in handles {
-            match handle.await {
-                Ok(delete_result) => delete_result?,
-                Err(e) => {
-                    eprintln!("Task panicked: {}", e);
-                    return Err(format!("Task panicked: {}", e).into());
-                }
-            }
+            self.client
+                .delete_objects()
+                .bucket(bucket_name)
+                .delete(delete)
+                .send()
+                .await?;
         }
 
         Ok(())
@@ -453,13 +450,17 @@ impl S3Service {
         bucket_name: &str,
         keys: Vec<String>,
     ) -> Result<Vec<(String, Vec<u8>)>, Box<dyn std::error::Error + Send + Sync>> {
+        const MAX_CONCURRENT: usize = 8;
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
         let mut handles: Vec<DownloadTaskHandle> = Vec::new();
 
         for key in keys {
+            let permit = semaphore.clone().acquire_owned().await?;
             let s3_service_clone = self.clone();
             let bucket_name_clone = bucket_name.to_string();
 
             let handle = tokio::spawn(async move {
+                let _permit = permit; // released when task ends
                 let data = s3_service_clone
                     .download_object(&bucket_name_clone, &key)
                     .await?;
