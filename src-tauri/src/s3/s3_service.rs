@@ -9,11 +9,15 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 use std::io::{Cursor, Write};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncReadExt;
 use tokio::sync::Semaphore;
 use tokio::task::JoinHandle;
+
+/// Callback appelé à chaque fichier complété : (fichiers_terminés, total)
+pub type ProgressFn = Arc<dyn Fn(usize, usize) + Send + Sync + 'static>;
 use zip::write::ZipWriter;
 use zip::CompressionMethod;
 
@@ -328,9 +332,12 @@ impl S3Service {
         bucket_name: &str,
         prefix: Option<String>,
         file_paths: Vec<PathBuf>,
+        on_progress: Option<ProgressFn>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         const MAX_CONCURRENT: usize = 8;
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let total = file_paths.len();
         let mut handles: Vec<JoinHandle<Result<(), Box<dyn std::error::Error + Send + Sync>>>> =
             Vec::new();
 
@@ -339,6 +346,8 @@ impl S3Service {
             let bucket_name_clone = bucket_name.to_string();
             let prefix_clone = prefix.clone();
             let client_clone = self.client.clone();
+            let counter_clone = counter.clone();
+            let on_progress_clone = on_progress.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = permit; // released when task ends
@@ -377,6 +386,11 @@ impl S3Service {
                     .body(body)
                     .send()
                     .await?;
+
+                let done = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(ref cb) = on_progress_clone {
+                    cb(done, total);
+                }
 
                 Ok(())
             });
@@ -449,21 +463,32 @@ impl S3Service {
         &self,
         bucket_name: &str,
         keys: Vec<String>,
+        on_progress: Option<ProgressFn>,
     ) -> Result<Vec<(String, Vec<u8>)>, Box<dyn std::error::Error + Send + Sync>> {
         const MAX_CONCURRENT: usize = 8;
         let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT));
+        let counter = Arc::new(AtomicUsize::new(0));
+        let total = keys.len();
         let mut handles: Vec<DownloadTaskHandle> = Vec::new();
 
         for key in keys {
             let permit = semaphore.clone().acquire_owned().await?;
             let s3_service_clone = self.clone();
             let bucket_name_clone = bucket_name.to_string();
+            let counter_clone = counter.clone();
+            let on_progress_clone = on_progress.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = permit; // released when task ends
                 let data = s3_service_clone
                     .download_object(&bucket_name_clone, &key)
                     .await?;
+
+                let done = counter_clone.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some(ref cb) = on_progress_clone {
+                    cb(done, total);
+                }
+
                 Ok((key, data))
             });
 
@@ -493,6 +518,7 @@ impl S3Service {
         bucket_name: &str,
         prefix: &str,
         region: Option<String>,
+        on_progress: Option<ProgressFn>,
     ) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         let objects = self
             .list_objects(bucket_name, Some(prefix), true, region)
@@ -504,7 +530,7 @@ impl S3Service {
             .map(|obj| obj.key)
             .collect();
 
-        let downloaded_files = self.download_objects(bucket_name, file_keys).await?;
+        let downloaded_files = self.download_objects(bucket_name, file_keys, on_progress).await?;
 
         let mut buffer = Cursor::new(Vec::new());
         let mut zip_writer = ZipWriter::new(&mut buffer);

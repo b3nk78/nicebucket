@@ -5,13 +5,35 @@ use specta::Type;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::Mutex;
 use uuid::Uuid;
 
 pub use s3_service::S3Service;
 
-use crate::s3::s3_service::S3ServiceConfig;
+use crate::s3::s3_service::{ProgressFn, S3ServiceConfig};
+
+// ── Progress events ────────────────────────────────────────────────────────────
+
+#[derive(Clone, Serialize)]
+struct TransferProgressPayload {
+    current: usize,
+    total: usize,
+    operation: &'static str, // "upload" | "download"
+}
+
+fn make_progress_fn(app: tauri::AppHandle, operation: &'static str, total: usize) -> ProgressFn {
+    Arc::new(move |current, _| {
+        let _ = app.emit(
+            "transfer:progress",
+            TransferProgressPayload {
+                current,
+                total,
+                operation,
+            },
+        );
+    })
+}
 
 pub type ConnectionMap = Arc<Mutex<HashMap<String, ConnectionConfig>>>;
 
@@ -410,15 +432,21 @@ pub struct DownloadObjectsOptions {
 #[tauri::command]
 #[specta::specta]
 pub async fn download_objects(
+    app: tauri::AppHandle,
     opts: DownloadObjectsOptions,
     state: State<'_, ConnectionMap>,
 ) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let total = opts.keys.len();
     let service = create_s3_service(&opts.common, state).await?;
+    let progress = make_progress_fn(app.clone(), "download", total);
 
-    service
-        .download_objects(&opts.bucket_name, opts.keys)
+    let result = service
+        .download_objects(&opts.bucket_name, opts.keys, Some(progress))
         .await
-        .map_err(|e| format!("Failed to download objects: {}", e))
+        .map_err(|e| format!("Failed to download objects: {}", e));
+
+    let _ = app.emit("transfer:done", ());
+    result
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -452,15 +480,31 @@ pub struct DownloadFolderOptions {
 #[tauri::command]
 #[specta::specta]
 pub async fn download_folder(
+    app: tauri::AppHandle,
     opts: DownloadFolderOptions,
     state: State<'_, ConnectionMap>,
 ) -> Result<Vec<u8>, String> {
     let service = create_s3_service(&opts.common, state).await?;
+    // total unknown until list_objects runs — progress emitted per file
+    let app_clone = app.clone();
+    let progress: ProgressFn = Arc::new(move |current, total| {
+        let _ = app_clone.emit(
+            "transfer:progress",
+            TransferProgressPayload {
+                current,
+                total,
+                operation: "download",
+            },
+        );
+    });
 
-    service
-        .download_folder(&opts.bucket_name, &opts.prefix, opts.common.bucket_region)
+    let result = service
+        .download_folder(&opts.bucket_name, &opts.prefix, opts.common.bucket_region, Some(progress))
         .await
-        .map_err(|e| format!("Failed to download folder: {}", e))
+        .map_err(|e| format!("Failed to download folder: {}", e));
+
+    let _ = app.emit("transfer:done", ());
+    result
 }
 
 #[derive(Serialize, Deserialize, Type)]
@@ -474,15 +518,21 @@ pub struct UploadObjectsOptions {
 #[tauri::command]
 #[specta::specta]
 pub async fn upload_objects(
+    app: tauri::AppHandle,
     opts: UploadObjectsOptions,
     state: State<'_, ConnectionMap>,
 ) -> Result<(), String> {
+    let total = opts.file_paths.len();
     let service = create_s3_service(&opts.common, state).await?;
+    let progress = make_progress_fn(app.clone(), "upload", total);
 
-    service
-        .upload_objects(&opts.bucket_name, opts.prefix, opts.file_paths)
+    let result = service
+        .upload_objects(&opts.bucket_name, opts.prefix, opts.file_paths, Some(progress))
         .await
-        .map_err(|e| format!("Failed to download objects: {}", e))
+        .map_err(|e| format!("Failed to upload objects: {}", e));
+
+    let _ = app.emit("transfer:done", ());
+    result
 }
 
 #[derive(Serialize, Deserialize, Type)]

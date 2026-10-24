@@ -1,3 +1,4 @@
+import { TransferProgressOverlay } from "./components/transfer-progress-overlay";
 import { ThemeToggle } from "./components/theme-toggle";
 import { Dashboard } from "./screens/dashboard/dashboard";
 import { DashboardProvider } from "./screens/dashboard/use-dashboard-context";
@@ -15,6 +16,8 @@ export function App() {
       <div className="absolute bottom-4 left-4">
         <ThemeToggle />
       </div>
+
+      <TransferProgressOverlay />
     </main>
   );
 }
