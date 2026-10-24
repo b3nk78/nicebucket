@@ -83,6 +83,8 @@ LD_PRELOAD=/usr/lib/libwayland-client.so GDK_SCALE=1 ./sweetbucket.AppImage
 3. If using MFA or AssumeRole, enter your token when prompted
 4. Browse, upload, download, and manage your buckets smoothly
 
+📖 **Need a complete step-by-step walkthrough?** Check out the [Tutoriel Sweetbucket (tutorial.md)](tutorial.md) for full instructions on MFA, AssumeRole, transfer monitoring, and tips.
+
 ---
 
 ## Development
