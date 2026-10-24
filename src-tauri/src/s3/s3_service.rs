@@ -112,7 +112,7 @@ impl S3Service {
         
         let mut request = sts_client.assume_role()
             .role_arn(role_arn)
-            .role_session_name("NicebucketSession");
+            .role_session_name("SweetbucketSession");
 
         if let (Some(m_arn), Some(m_token)) = (mfa_arn, mfa_token) {
             request = request.serial_number(m_arn).token_code(m_token);

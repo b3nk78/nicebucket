@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "nicebucket",
-  "version": "0.4.0",
-  "identifier": "com.nicebucket.nicebucket",
+  "productName": "sweetbucket",
+  "version": "0.1.0",
+  "identifier": "com.sweetbucket.sweetbucket",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "nicebucket",
+        "title": "sweetbucket",
         "width": 800,
         "height": 600
       }
