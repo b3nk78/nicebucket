@@ -21,13 +21,14 @@ import {
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { extname, join } from "@tauri-apps/api/path";
 import { open } from "@tauri-apps/plugin-dialog";
-import { exists, writeFile } from "@tauri-apps/plugin-fs";
+import { exists, mkdir, writeFile } from "@tauri-apps/plugin-fs";
 import { EllipsisVertical, File, Folder, RotateCw } from "lucide-react";
 import { ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
 import { toast } from "sonner";
 import { CreateFolderButton } from "./create-folder-button";
 import { DeleteObjectsDialog } from "./delete-objects-dialog";
+import { DownloadFolderDialog } from "@/components/download-folder-dialog";
 import { MoveFilesDialog } from "./move-files-dialog";
 import { ObjectPreview } from "./object-preview";
 import { useDashboardContext } from "./use-dashboard-context";
@@ -75,6 +76,7 @@ export function ObjectList({
   // a better solution in the future.
   const [itemToDelete, setItemToDelete] = useState<string | null>(null);
   const [folderToDelete, setFolderToDelete] = useState<string | null>(null);
+  const [downloadFolderDialogKey, setDownloadFolderDialogKey] = useState<string | null>(null);
   const [visibleConfirmationDialog, setVisibleConfirmationDialog] = useState<
     null | "deleteObjects" | "deleteFolder" | "moveObjects"
   >(null);
@@ -102,6 +104,7 @@ export function ObjectList({
         },
         bucket_name: bucket.name,
         prefix,
+        recursive: false,
       });
     },
 
@@ -242,6 +245,75 @@ export function ObjectList({
     },
     onSuccess: () => {
       toast.success("Download successful.");
+    },
+    onError: (error) => {
+      console.error(error);
+      toast.error("Download failed.");
+    },
+  });
+
+  const { mutate: downloadFolderIndividual } = useMutation({
+    mutationFn: async (folderKey: string) => {
+      const folder = await open({
+        directory: true,
+        multiple: false,
+      });
+
+      if (!folder) {
+        return;
+      }
+
+      const objects = await commands.listObjects({
+        common: {
+          connection,
+          bucket_region: bucket.region,
+        },
+        bucket_name: bucket.name,
+        prefix: folderKey,
+        recursive: true,
+      });
+
+      const files = objects.filter((o) => !o.is_folder);
+      if (files.length === 0) {
+        toast.info("No files found in folder.");
+        return;
+      }
+
+      const keys = files.map((f) => f.key);
+      const response = await commands.downloadObjects({
+        common: {
+          connection,
+          bucket_region: bucket.region,
+        },
+        bucket_name: bucket.name,
+        keys,
+      });
+
+      const cleanPrefix = folderKey.endsWith("/") ? folderKey : `${folderKey}/`;
+      const trimmed = cleanPrefix.slice(0, -1);
+      const lastSlashIdx = trimmed.lastIndexOf("/");
+      const parentPrefix =
+        lastSlashIdx >= 0 ? trimmed.slice(0, lastSlashIdx + 1) : "";
+
+      for (const [key, bytes] of response) {
+        const relativePath = key.startsWith(parentPrefix)
+          ? key.slice(parentPrefix.length)
+          : key;
+        const segments = relativePath.split("/").filter(Boolean);
+        if (segments.length === 0) continue;
+
+        const filePath = await join(folder, ...segments);
+        if (segments.length > 1) {
+          const dirSegments = segments.slice(0, -1);
+          const dirPath = await join(folder, ...dirSegments);
+          await mkdir(dirPath, { recursive: true });
+        }
+
+        await writeFile(filePath, new Uint8Array(bytes));
+      }
+    },
+    onSuccess: () => {
+      toast.success("Folder downloaded successfully.");
     },
     onError: (error) => {
       console.error(error);
@@ -466,7 +538,7 @@ export function ObjectList({
                               onClick={(e) => {
                                 e.stopPropagation();
 
-                                downloadFolder(item.key);
+                                setDownloadFolderDialogKey(item.key);
                               }}
                             >
                               Download
@@ -631,6 +703,22 @@ export function ObjectList({
           connection={connection}
           bucket={bucket}
           currentPrefix={prefix}
+        />
+
+        <DownloadFolderDialog
+          isOpen={downloadFolderDialogKey !== null}
+          onOpenChange={(open) => {
+            if (!open) {
+              setDownloadFolderDialogKey(null);
+            }
+          }}
+          folderKey={downloadFolderDialogKey}
+          onDownloadZip={(key) => {
+            downloadFolder(key);
+          }}
+          onDownloadIndividual={(key) => {
+            downloadFolderIndividual(key);
+          }}
         />
       </div>
     </>

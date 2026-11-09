@@ -380,6 +380,7 @@ pub struct ListObjectsOptions {
     common: CommonOperationOptions,
     bucket_name: String,
     prefix: Option<String>,
+    recursive: Option<bool>,
 }
 
 #[tauri::command]
@@ -394,7 +395,7 @@ pub async fn list_objects(
         .list_objects(
             &opts.bucket_name,
             opts.prefix.as_deref(),
-            false,
+            opts.recursive.unwrap_or(false),
             opts.common.bucket_region,
         )
         .await

@@ -65,6 +65,7 @@ export function MoveFilesDialog({
         },
         bucket_name: bucket.name,
         prefix: dialogPrefix,
+        recursive: false,
       });
 
       return result;
