@@ -1,7 +1,7 @@
 <div align="center">
   <img src="./assets/logo.png" alt="Logo of sweetbucket" width="33%">
   <h1>sweetbucket</h1>
-  <p align="center"><strong>v0.1.0</strong> — A fast, private, open-source S3 GUI built with Tauri & React.</p>
+  <p align="center"><strong>v0.2.0</strong> — A fast, private, open-source S3 GUI built with Tauri & React.</p>
   <p align="center"><em>sweetbucket is an enhanced fork of <a href="https://github.com/nicebucket-org/nicebucket">nicebucket</a> with AWS STS AssumeRole & MFA support, bulk transfer optimizations, progress tracking, and refined UI/UX.</em></p>
 </div>
 
@@ -26,15 +26,28 @@ It originated as a fork of [nicebucket](https://github.com/nicebucket-org/nicebu
   - Floating dynamic progress overlay with live counters, percentages, and completion notices
 - **File Management**:
   - Upload & download single or multiple files
-  - Download entire folders as ZIP archives
+  - Download entire folders as individual files (preserving hierarchy) or as ZIP archives
   - Create, move, and delete folders/files
   - Preview text, images, and documents without downloading
 - **Connection Profiles**:
-  - Edit, save, and manage multiple profiles safely stored in your OS keyring
+  - Save, edit, and manage multiple profiles safely stored in your OS keyring (with or without connecting first)
 
 ---
 
 # Changelog (since fork from nicebucket)
+
+### Version 0.2.0
+
+#### 📂 Flexible Folder Downloads
+- **Individual Files Download**: Added option to download folders preserving the complete subfolder hierarchy, avoiding mandatory ZIP compression.
+- **Download Choice Dialog**: Interactive prompt when downloading folders offering both individual files and single ZIP archive options.
+
+#### 💾 Direct Profile Management
+- **Save Profile Without Connecting**: Added direct "Save Profile" and "Update Profile" buttons on connection creation/editing screens, eliminating the need to reach AWS before saving.
+
+#### 🎨 Branding & Documentation
+- **Sweetbucket Branding & Icon**: New kawaii mascot logo and custom application icons across all desktop platforms.
+- **Comprehensive Tutorial**: Added [`tutorial.md`](tutorial.md) covering MFA, AssumeRole, Cloudflare R2, transfer monitoring, and common troubleshooting tips.
 
 ### Version 0.1.0
 
