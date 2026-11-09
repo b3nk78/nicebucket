@@ -57,7 +57,7 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
       queryFn: () => commands.loadSavedConnections(),
     });
 
-  const { mutate: saveConnection } = useMutation({
+  const { mutate: saveConnection, isPending: isSavePending } = useMutation({
     mutationFn: async (config: ConnectionConfig) => {
       // If editing, delete old entry first
       if (editingUuid) {
@@ -644,9 +644,22 @@ export function CredentialsForm({ className }: CredentialsFormProps) {
 
         {isError && <p className="text-rose-500">Connection failed</p>}
 
-        <Button type="submit" variant="outline" disabled={isPending}>
-          Connect
-        </Button>
+        <div className="flex gap-2">
+          <Button type="submit" variant="outline" disabled={isPending} className="flex-1">
+            Connect
+          </Button>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={isSavePending}
+            className="flex-1"
+            onClick={handleSubmit((data) => {
+              saveConnection(getConnectionConfig(data));
+            })}
+          >
+            {editingUuid ? "Update Profile" : "Save Profile"}
+          </Button>
+        </div>
       </form>
 
       <Dialog open={mfaDialogOpen} onOpenChange={setMfaDialogOpen}>
